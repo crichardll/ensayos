@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mezcla de colores</title>
+<style>
+  html, body { margin: 0; background: #fff; font-family: Verdana, sans-serif; }
+  .wrap { max-width: 600px; margin: 0 auto; padding: 8px 16px 12px; }
+  canvas { display: block; width: 100%; height: auto; aspect-ratio: 600 / 440; }
+  input[type=range] { width: 100%; margin: 6px 0 2px; accent-color: #555; cursor: pointer; }
+  .labels { display: flex; justify-content: space-between; font-size: 11px; color: #777; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="c" role="img" aria-label="Miles de puntos rojos, amarillos y azules: revueltos se ven grises, agrupados de a dos forman otros colores y separados quedan solo los tres primarios"></canvas>
+  <input id="r" type="range" min="0" max="1000" value="0" aria-label="Separar los colores">
+  <div class="labels"><span>mezcla</span><span>colores</span><span>primarios</span></div>
+</div>
+<script>
+(function () {
+  // ---- Pigmentos: solo existen estos tres. Todo lo demás es mezcla. ----
+  const PIG = [
+    [210, 35, 75],   // 0 rojo
+    [245, 210, 40],  // 1 amarillo
+    [20, 110, 215]   // 2 azul
+  ];
+  const LOG = PIG.map(c => c.map(v => Math.log(Math.max(v, 5) / 255)));
+
+  const W = 600, H = 440, CELL = 3;
+  const GW = W / CELL, GH = Math.ceil(H / CELL), GN = GW * GH;
+  const cx = 300, cy = 215;
+  const rand = Math.random;
+  const pol = (deg, r) => [cx + r * Math.cos(deg * Math.PI / 180), cy + r * Math.sin(deg * Math.PI / 180)];
+  const disc = (x, y, R, sx = 1, sy = 1) => {
+    const r = R * Math.sqrt(rand()), t = rand() * Math.PI * 2;
+    return [x + Math.cos(t) * r * sx, y + Math.sin(t) * r * sy];
+  };
+
+  const RP = 26;                       // radio de cada trozo de color
+  const PRIM_POS = [pol(-90, 140), pol(30, 140), pol(150, 140)];
+  // Trozos intermedios: [ángulo, pigmento A, pigmento B, proporción A]
+  const pieces = [
+    [-60, 0, 1, 2 / 3], [-30, 0, 1, 1 / 2], [0, 0, 1, 1 / 3],
+    [60, 1, 2, 2 / 3],  [90, 1, 2, 1 / 2],  [120, 1, 2, 1 / 3],
+    [180, 2, 0, 2 / 3], [210, 2, 0, 1 / 2], [240, 2, 0, 1 / 3]
+  ];
+  const PER = 450;
+
+  // ---- Partículas ----
+  const parts = [];
+  pieces.forEach(([deg, pa, pb, fa], k) => {
+    const c = pol(deg, 145);
+    const na = Math.round(PER * fa);
+    for (let i = 0; i < PER; i++) {
+      const pig = i < na ? pa : pb;
+      parts.push({
+        pig,
+        sortKey: ((deg + 360) % 360) + rand() * 0.01,
+        piece: disc(c[0], c[1], RP),
+        prim: disc(PRIM_POS[pig][0], PRIM_POS[pig][1], RP * Math.sqrt(3)),
+        d: rand() * 0.3,
+        ph: rand() * 100
+      });
+    }
+  });
+  // Posiciones en la masa inicial: una papa irregular, asignadas por ángulo
+  // para que cada partícula salga hacia el lado donde va su trozo.
+  const mixPts = parts.map(() => {
+    let p;
+    do {
+      p = disc(0, 0, 1);
+      const t = Math.atan2(p[1], p[0]);
+      const rr = Math.hypot(p[0], p[1]);
+      const R = 1 + 0.09 * Math.sin(3 * t + 1) + 0.06 * Math.sin(5 * t + 2);
+      p = [cx + p[0] * 80 * R, cy + p[1] * 72 * R];
+    } while (false);
+    return p;
+  });
+  const ang = p => ((Math.atan2(p[1] - cy, p[0] - cx) * 180 / Math.PI) + 360) % 360;
+  mixPts.sort((a, b) => ang(a) - ang(b));
+  const order = parts.map((p, i) => i).sort((a, b) => parts[a].sortKey - parts[b].sortKey);
+  // Rotamos para alinear el ángulo 0 de ambos ordenamientos
+  order.forEach((pi, j) => { parts[pi].mix = mixPts[j]; });
+  // Revolver toda la masa: en la mezcla cada pigmento queda repartido al azar
+  for (let i = parts.length - 1; i > 0; i--) {
+    const j = Math.floor(rand() * (i + 1));
+    const t = parts[i].mix; parts[i].mix = parts[j].mix; parts[j].mix = t;
+  }
+
+  // ---- Canvas ----
+  const canvas = document.getElementById('c');
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = W * dpr; canvas.height = H * dpr;
+  const ctx = canvas.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  const off = document.createElement('canvas');
+  off.width = GW; off.height = GH;
+  const octx = off.getContext('2d');
+  const img = octx.createImageData(GW, GH);
+  const D = img.data;
+
+  const F = [new Float32Array(GN), new Float32Array(GN), new Float32Array(GN)];
+  const F1 = [new Float32Array(GN), new Float32Array(GN), new Float32Array(GN)];
+  const F2 = [new Float32Array(GN), new Float32Array(GN), new Float32Array(GN)];
+  const F3 = [new Float32Array(GN), new Float32Array(GN), new Float32Array(GN)];
+  const T2 = new Float32Array(GN), tmp = new Float32Array(GN);
+
+  function blur(src, dst) {           // núcleo [1,2,1]/4 separable
+    for (let y = 0; y < GH; y++) {
+      const o = y * GW;
+      for (let x = 0; x < GW; x++) {
+        const l = x > 0 ? src[o + x - 1] : 0, r = x < GW - 1 ? src[o + x + 1] : 0;
+        tmp[o + x] = (l + 2 * src[o + x] + r) * 0.25;
+      }
+    }
+    for (let y = 0; y < GH; y++) {
+      for (let x = 0; x < GW; x++) {
+        const i = y * GW + x;
+        const u = y > 0 ? tmp[i - GW] : 0, d = y < GH - 1 ? tmp[i + GW] : 0;
+        dst[i] = (u + 2 * tmp[i] + d) * 0.25;
+      }
+    }
+  }
+
+  const clamp = x => Math.max(0, Math.min(1, x));
+  const smooth = x => x * x * (3 - 2 * x);
+
+  const range = document.getElementById('r');
+  let target = 0, cur = 0;
+  range.addEventListener('input', () => { target = range.value / 1000; });
+
+  function frame(time) {
+    cur += (target - cur) * 0.1;
+    F[0].fill(0); F[1].fill(0); F[2].fill(0);
+    const s1 = cur / 0.45, s2 = (cur - 0.55) / 0.45;
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      const a = smooth(clamp((s1 - p.d) / 0.7));
+      const b = smooth(clamp((s2 - p.d) / 0.7));
+      let x = p.mix[0] + (p.piece[0] - p.mix[0]) * a;
+      let y = p.mix[1] + (p.piece[1] - p.mix[1]) * a;
+      x += (p.prim[0] - x) * b;
+      y += (p.prim[1] - y) * b;
+      x += Math.sin(time * 0.002 + p.ph) * 0.8;
+      y += Math.cos(time * 0.0017 + p.ph * 1.3) * 0.8;
+      const gx = (x / CELL) | 0, gy = (y / CELL) | 0;
+      if (gx < 0 || gy < 0 || gx >= GW || gy >= GH) continue;
+      F[p.pig][gy * GW + gx] += 1;
+    }
+    for (let c = 0; c < 3; c++) { blur(F[c], F1[c]); blur(F1[c], F2[c]); blur(F2[c], F3[c]); }
+    for (let i = 0; i < GN; i++) T2[i] = F3[0][i] + F3[1][i] + F3[2][i];
+
+    for (let y = 0; y < GH; y++) {
+      for (let x = 0; x < GW; x++) {
+        const i = y * GW + x, o = i * 4;
+        const t = T2[i];
+        const al = smooth(clamp((t - 0.3) / 0.45));
+        if (al <= 0) { D[o + 3] = 0; continue; }
+        // 75% color promedio de la zona (lo que ve el ojo) + 25% grano de cada punto
+        let r = 0.75 * F3[0][i] + 0.25 * F1[0][i];
+        let ye = 0.75 * F3[1][i] + 0.25 * F1[1][i];
+        let bl = 0.75 * F3[2][i] + 0.25 * F1[2][i];
+        let s = r + ye + bl;
+        if (s < 0.05) { s = 1; r = ye = bl = 1 / 3; }
+        const fr = r / s, fy = ye / s, fb = bl / s;
+        // Mezcla sustractiva: media geométrica de las reflectancias
+        const gxv = (x < GW - 1 ? T2[i + 1] : 0) - (x > 0 ? T2[i - 1] : 0);
+        const gyv = (y < GH - 1 ? T2[i + GW] : 0) - (y > 0 ? T2[i - GW] : 0);
+        const shade = 1 + Math.max(-0.28, Math.min(0.32, (-gxv - gyv) * 0.25));
+        for (let c = 0; c < 3; c++) {
+          const v = 255 * Math.exp(fr * LOG[0][c] + fy * LOG[1][c] + fb * LOG[2][c]) * shade;
+          D[o + c] = v > 255 ? 255 : v;
+        }
+        D[o + 3] = al * 255;
+      }
+    }
+    octx.putImageData(img, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(off, 0, 0, GW * CELL * dpr, GH * CELL * dpr);
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
